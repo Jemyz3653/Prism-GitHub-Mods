@@ -7,6 +7,11 @@ on:
       - 'installer/**'
       - '.github/workflows/installer.yml'
   workflow_dispatch:
+    inputs:
+      test_release:
+        description: Install and launch the published v0.1.0 package in a temporary profile
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,6 +61,35 @@ jobs:
           $window.Close()
           '@
           & ([ScriptBlock]::Create($source.Substring(0,$mark) + $test))
+      - name: Install published preview in a temporary profile
+        if: inputs.test_release
+        shell: pwsh
+        run: |
+          $temp = Join-Path $env:RUNNER_TEMP 'Prism GitHub test'
+          $data = Join-Path $temp 'Prism data'
+          $worker = Join-Path $temp 'Installer request'
+          New-Item -ItemType Directory -Force $data, $worker | Out-Null
+          $env:LOCALAPPDATA = Join-Path $temp 'LocalAppData'
+          $original = Join-Path $temp 'prismlauncher.exe'
+          $setup = (Resolve-Path out/Prism-GitHub-Mods-Setup-x64.exe).Path
+          Copy-Item $setup $original
+          $originalHash = (Get-FileHash $original).Hash
+          $config = Join-Path $data 'prismlauncher.cfg'
+          Set-Content -Encoding ascii $config 'MCLaunchMethod=LauncherPart'
+          $configHash = (Get-FileHash $config).Hash
+          @{ Original = $original; Data = $data } |
+            ConvertTo-Json -Compress | Set-Content -Encoding utf8NoBOM (Join-Path $worker 'request.json')
+          $process = Start-Process -FilePath $setup -ArgumentList ('--install "' + $worker + '"') -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Installer backend timed out.' }
+          $result = Get-Content -Raw (Join-Path $worker 'result.json') | ConvertFrom-Json
+          if (-not $result.Done -or $result.Error) { throw "Installer failed: $($result.Error)" }
+          if (-not (Test-Path $result.Exe) -or $result.Data -ne $data) { throw 'Wrong installation path.' }
+          if ((Get-FileHash $original).Hash -ne $originalHash -or (Get-FileHash $config).Hash -ne $configHash) {
+            throw 'Installation modified the existing Prism files.'
+          }
+          $process = Start-Process -FilePath $result.Exe -ArgumentList '--version' -PassThru
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Installed Prism failed to exit.' }
+          if ($process.ExitCode -ne 0) { throw "Installed Prism exited $($process.ExitCode)." }
       - uses: actions/upload-artifact@v7
         with:
           name: Prism-GitHub-Installer
