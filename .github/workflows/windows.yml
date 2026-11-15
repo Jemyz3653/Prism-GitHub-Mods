@@ -1,0 +1,65 @@
+name: Build patched Prism for Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: PrismLauncher/PrismLauncher
+          ref: 7d2d3c1ec6fcf8255ebacd02d9f792688575dfb4
+          path: upstream
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: '17'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: git
+          pacboy: >-
+            toolchain:p cmake:p extra-cmake-modules:p ninja:p qt6-base:p
+            qt6-svg:p qt6-imageformats:p qt6-networkauth:p cmark:p
+            qrencode:p tomlplusplus:p libarchive:p
+      - name: Patch and build
+        shell: msys2 {0}
+        env:
+          BUILD_PLATFORM: detemkur
+        run: |
+          cd upstream
+          git apply --check ../patches/github-mods.patch
+          git apply ../patches/github-mods.patch
+          cmake --preset windows_mingw -DENABLE_LTO=OFF -DLauncher_UPDATER_GITHUB_REPO= -DBUILD_TESTING=OFF
+          cmake --build --preset windows_mingw --config Release --parallel 4
+          cmake --install build --config Release
+      - name: Package and smoke test
+        shell: pwsh
+        run: |
+          $launcher = Resolve-Path upstream/install/prismlauncher.exe
+          & $launcher --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force out
+          Compress-Archive -Path upstream/install/* -DestinationPath out/Prism-11.1.1-GitHub-Windows-x64.zip
+          (Get-FileHash out/Prism-11.1.1-GitHub-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant() |
+            Set-Content -Encoding ascii out/Prism-11.1.1-GitHub-Windows-x64.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Prism-GitHub-Windows-x64
+          path: out/*
+          if-no-files-found: error

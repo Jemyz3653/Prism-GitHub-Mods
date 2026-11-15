@@ -1,0 +1,421 @@
+diff --git a/launcher/ui/dialogs/GitHubModsPage.h b/launcher/ui/dialogs/GitHubModsPage.h
+new file mode 100644
+index 0000000..6aff78a
+--- /dev/null
++++ b/launcher/ui/dialogs/GitHubModsPage.h
+@@ -0,0 +1,307 @@
++// SPDX-License-Identifier: GPL-3.0-only
++#pragma once
++
++#include <QComboBox>
++#include <QCryptographicHash>
++#include <QDesktopServices>
++#include <QFileInfo>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QLabel>
++#include <QLineEdit>
++#include <QListWidget>
++#include <QNetworkAccessManager>
++#include <QNetworkReply>
++#include <QPushButton>
++#include <QRegularExpression>
++#include <QTemporaryFile>
++#include <QVBoxLayout>
++
++#include "minecraft/MinecraftInstance.h"
++#include "minecraft/PackProfile.h"
++#include "minecraft/mod/Mod.h"
++#include "minecraft/mod/ModFolderModel.h"
++#include "ui/pages/BasePage.h"
++
++namespace ResourceDownload {
++class GitHubModsPage final : public QWidget, public BasePage {
++public:
++    GitHubModsPage(QWidget* parent, MinecraftInstance& instance, ModFolderModel& mods)
++        : QWidget(parent), m_instance(instance), m_mods(mods), m_network(new QNetworkAccessManager(this))
++    {
++        auto* layout = new QVBoxLayout(this);
++        auto* top = new QHBoxLayout;
++        m_search = new QLineEdit(this);
++        m_search->setPlaceholderText(tr("Search GitHub mods"));
++        m_reload = new QPushButton(tr("Refresh"), this);
++        top->addWidget(m_search, 1);
++        top->addWidget(m_reload);
++        layout->addLayout(top);
++
++        auto* source = new QLabel(tr("Detemkur Studios · GitHub Releases"), this);
++        layout->addWidget(source);
++        m_projects = new QListWidget(this);
++        layout->addWidget(m_projects, 1);
++        m_info = new QLabel(this);
++        m_info->setTextFormat(Qt::PlainText);
++        m_info->setWordWrap(true);
++        layout->addWidget(m_info);
++
++        m_versions = new QComboBox(this);
++        layout->addWidget(m_versions);
++        auto* buttons = new QHBoxLayout;
++        m_open = new QPushButton(tr("View release on GitHub"), this);
++        m_install = new QPushButton(tr("Install into this instance"), this);
++        m_install->setDefault(false);
++        m_install->setAutoDefault(false);
++        buttons->addWidget(m_open);
++        buttons->addWidget(m_install);
++        layout->addLayout(buttons);
++        m_status = new QLabel(this);
++        m_status->setTextFormat(Qt::PlainText);
++        m_status->setWordWrap(true);
++        layout->addWidget(m_status);
++
++        connect(m_search, &QLineEdit::textChanged, this, [this] { showProjects(); });
++        connect(m_projects, &QListWidget::currentItemChanged, this, [this] { showVersions(); });
++        connect(m_versions, &QComboBox::currentIndexChanged, this, [this] { renderSelection(); });
++        connect(m_reload, &QPushButton::clicked, this, [this] { loadCatalog(); });
++        connect(m_install, &QPushButton::clicked, this, [this] { install(); });
++        connect(m_open, &QPushButton::clicked, this, [this] {
++            QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/") + currentProject().value("repo").toString()
++                                           + QStringLiteral("/releases/tag/")
++                                           + QString::fromLatin1(QUrl::toPercentEncoding(currentVersion().value("tag").toString()))));
++        });
++        renderSelection();
++    }
++
++    QString id() const override { return QStringLiteral("github-mods"); }
++    QString displayName() const override { return QStringLiteral("GitHub"); }
++    QIcon icon() const override { return QIcon::fromTheme(QStringLiteral("github"), QIcon::fromTheme(QStringLiteral("download"))); }
++    void openedImpl() override
++    {
++        if (!m_loaded && m_reload->isEnabled())
++            loadCatalog();
++    }
++
++private:
++    static constexpr qint64 MaxCatalog = 1024 * 1024;
++    static constexpr qint64 MaxJar = 128 * 1024 * 1024;
++    using Receive = std::function<void(QByteArray, QString)>;
++
++    void fetch(const QUrl& url, qint64 size, Receive receive)
++    {
++        QNetworkRequest request(url);
++        request.setTransferTimeout(30000);
++        request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Prism-GitHub-Mods/1.0"));
++        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
++        auto* reply = m_network->get(request);
++        reply->setReadBufferSize(65536);
++        auto bytes = std::make_shared<QByteArray>();
++        auto tooLarge = std::make_shared<bool>(false);
++        auto read = [reply, bytes, tooLarge, size] {
++            if (reply->bytesAvailable() > size - bytes->size()) {
++                *tooLarge = true;
++                reply->abort();
++                return;
++            }
++            bytes->append(reply->readAll());
++        };
++        connect(reply, &QNetworkReply::readyRead, this, read);
++        connect(reply, &QNetworkReply::finished, this, [reply, bytes, tooLarge, size, receive = std::move(receive)] {
++            QString error;
++            if (*tooLarge || reply->bytesAvailable() > size - bytes->size())
++                error = QObject::tr("The download exceeded its declared size.");
++            else if (reply->error() != QNetworkReply::NoError)
++                error = reply->errorString();
++            else
++                bytes->append(reply->readAll());
++            reply->deleteLater();
++            receive(std::move(*bytes), error);
++        });
++    }
++
++    void loadCatalog()
++    {
++        m_reload->setEnabled(false);
++        m_status->setText(tr("Loading the GitHub catalog…"));
++        fetch(QUrl(QStringLiteral("https://raw.githubusercontent.com/Jemyz3653/Prism-GitHub-Mods/main/mods.json")), MaxCatalog,
++              [this](QByteArray bytes, const QString& error) {
++                  m_reload->setEnabled(true);
++                  if (!error.isEmpty()) {
++                      m_status->setText(tr("Could not load the catalog. %1").arg(error));
++                      return;
++                  }
++                  const auto catalog = QJsonDocument::fromJson(bytes).object();
++                  if (catalog.value("schema").toInt() != 1 || !catalog.value("projects").isArray()) {
++                      m_status->setText(tr("The catalog has an unsupported format."));
++                      return;
++                  }
++                  m_catalog = catalog.value("projects").toArray();
++                  m_loaded = true;
++                  showProjects();
++                  if (m_projects->count() == 0)
++                      m_status->setText(tr("No catalog entries match this Minecraft version and mod loader."));
++              });
++    }
++
++    static bool compatible(const QJsonObject& v, const QString& mc, bool fabric)
++    {
++        return fabric && v.value("loader").toString() == QStringLiteral("fabric")
++               && v.value("minecraft").toArray().contains(QJsonValue(mc));
++    }
++
++    void showProjects()
++    {
++        auto* profile = m_instance.getPackProfile();
++        const auto mc = profile->getComponentVersion(QStringLiteral("net.minecraft"));
++        const bool fabric = !profile->getComponentVersion(QStringLiteral("net.fabricmc.fabric-loader")).isEmpty();
++        const auto query = m_search->text().trimmed();
++        m_visible.clear();
++        m_projects->clear();
++        for (const auto& value : m_catalog) {
++            auto p = value.toObject();
++            if (!QRegularExpression(QStringLiteral("^Jemyz3653/[A-Za-z0-9_.-]+$")).match(p.value("repo").toString()).hasMatch())
++                continue;
++            if (!p.value("name").toString().contains(query, Qt::CaseInsensitive)
++                && !p.value("description").toString().contains(query, Qt::CaseInsensitive))
++                continue;
++            QJsonArray matches;
++            for (const auto& v : p.value("releases").toArray()) {
++                if (compatible(v.toObject(), mc, fabric))
++                    matches.append(v);
++            }
++            if (matches.isEmpty())
++                continue;
++            p.insert("releases", matches);
++            m_visible.append(p);
++            m_projects->addItem(p.value("name").toString());
++        }
++        m_projects->setCurrentRow(0);
++        if (m_projects->count() == 0)
++            m_status->setText(query.isEmpty() ? tr("No compatible releases for this instance.") : tr("No mods match your search."));
++    }
++
++    QJsonObject currentProject() const
++    {
++        return m_visible.value(m_projects->currentRow());
++    }
++
++    QJsonObject currentVersion() const
++    {
++        return m_versions->currentData().toJsonObject();
++    }
++
++    void showVersions()
++    {
++        m_versions->clear();
++        for (const auto& entry : currentProject().value("releases").toArray()) {
++            const auto v = entry.toObject();
++            auto label = v.value("version").toString();
++            if (v.value("prerelease").toBool())
++                label += tr(" (pre-release)");
++            m_versions->addItem(label, QVariant::fromValue(v));
++        }
++        renderSelection();
++    }
++
++    void renderSelection()
++    {
++        const auto project = currentProject();
++        auto description = project.value("description").toString();
++        const auto dependencies = currentVersion().value("requires").toObject();
++        if (!dependencies.isEmpty())
++            description += tr("\nRequired mods: %1. Install missing dependencies from Modrinth or CurseForge.").arg(dependencies.keys().join(", "));
++        m_info->setText(description);
++        const bool selected = m_versions->currentIndex() >= 0;
++        m_open->setEnabled(selected);
++        m_install->setEnabled(selected && !m_installing);
++        if (selected && !m_installing)
++            m_status->setText(tr("Ready to install into this instance."));
++    }
++
++    void install()
++    {
++        const auto project = currentProject();
++        const auto version = currentVersion();
++        const auto name = version.value("file").toString();
++        const auto digest = version.value("sha256").toString().toLatin1().toLower();
++        const auto maxSize = version.value("bytes").toInteger();
++        const QUrl url(version.value("url").toString());
++        const auto repoPath = QStringLiteral("/") + project.value("repo").toString() + QStringLiteral("/releases/download/");
++        const auto dir = m_mods.dir();
++        const auto destination = dir.filePath(name);
++        const auto modId = project.value("id").toString();
++
++        if (!QRegularExpression(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9.+_-]*\\.jar$")).match(name).hasMatch()
++            || !QRegularExpression(QStringLiteral("^[a-f0-9]{64}$")).match(QString::fromLatin1(digest)).hasMatch()
++            || maxSize <= 0 || maxSize > MaxJar
++            || url.scheme() != QStringLiteral("https") || url.authority() != QStringLiteral("github.com")
++            || !url.path().startsWith(repoPath) || !url.path().endsWith(QStringLiteral("/") + name)) {
++            m_status->setText(tr("Invalid release metadata."));
++            return;
++        }
++        if (m_instance.isRunning()) {
++            m_status->setText(tr("Close Minecraft before installing mods."));
++            return;
++        }
++        for (const auto* mod : m_mods.allMods()) {
++            if (mod->mod_id() == modId) {
++                m_status->setText(tr("This mod is already in the instance. Remove its existing version before installing another."));
++                return;
++            }
++        }
++        // The file watcher may not have parsed a jar that was just added.
++        if (QFileInfo::exists(destination) || QFileInfo::exists(destination + QStringLiteral(".disabled"))
++            || !QDir().mkpath(dir.absolutePath())) {
++            m_status->setText(tr("This file already exists or the mods folder cannot be written."));
++            return;
++        }
++        m_installing = true;
++        m_install->setEnabled(false);
++        m_status->setText(tr("Downloading %1…").arg(name));
++        fetch(url, maxSize, [this, name, digest, destination, maxSize, dir](QByteArray bytes, const QString& error) {
++            m_installing = false;
++            renderSelection();
++            if (!error.isEmpty()) {
++                m_status->setText(tr("Download failed. %1").arg(error));
++                return;
++            }
++            if (bytes.size() != maxSize || QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex() != digest) {
++                m_status->setText(tr("The downloaded file did not pass its SHA-256 check."));
++                return;
++            }
++            if (m_instance.isRunning() || QFileInfo::exists(destination + QStringLiteral(".disabled"))) {
++                m_status->setText(tr("The instance changed while downloading. Close Minecraft and try again."));
++                return;
++            }
++            QTemporaryFile staged(dir.filePath(QStringLiteral(".github-mod-XXXXXX")));
++            if (!staged.open() || staged.write(bytes) != bytes.size() || !staged.flush()
++                || !staged.rename(destination)) {
++                m_status->setText(tr("Could not write the mod. Check the folder permissions and free space."));
++                return;
++            }
++            staged.setAutoRemove(false);
++            m_mods.update();
++            m_status->setText(tr("Installed %1.").arg(name));
++        });
++    }
++
++    MinecraftInstance& m_instance;
++    ModFolderModel& m_mods;
++    QNetworkAccessManager* m_network;
++    QLineEdit* m_search;
++    QListWidget* m_projects;
++    QComboBox* m_versions;
++    QPushButton* m_reload;
++    QPushButton* m_open;
++    QPushButton* m_install;
++    QLabel* m_info;
++    QLabel* m_status;
++    QJsonArray m_catalog;
++    QList<QJsonObject> m_visible;
++    bool m_loaded = false;
++    bool m_installing = false;
++};
++}  // namespace ResourceDownload
+diff --git a/launcher/ui/dialogs/ResourceDownloadDialog.cpp b/launcher/ui/dialogs/ResourceDownloadDialog.cpp
+index c222217..dc1627b 100644
+--- a/launcher/ui/dialogs/ResourceDownloadDialog.cpp
++++ b/launcher/ui/dialogs/ResourceDownloadDialog.cpp
+@@ -26,6 +26,7 @@
+ 
+ #include "Application.h"
+ #include "ResourceDownloadTask.h"
++#include "GitHubModsPage.h"
+ 
+ #include "minecraft/PackProfile.h"
+ #include "minecraft/mod/ModFolderModel.h"
+@@ -208,7 +209,9 @@ void ResourceDownloadDialog::confirm()
+     if (confirmDialog->exec() != 0) {
+         auto deselected = confirmDialog->deselectedResources();
+         for (auto* page : m_container->getPages()) {
+-            auto* res = static_cast<ResourcePage*>(page);
++            auto* res = dynamic_cast<ResourcePage*>(page);
++            if (!res)
++                continue;
+             for (const auto& name : deselected) {
+                 res->removeResourceFromPage(name);
+             }
+@@ -230,21 +233,22 @@ bool ResourceDownloadDialog::selectPage(QString pageId)
+ ResourcePage* ResourceDownloadDialog::selectedPage()
+ {
+     auto* result = dynamic_cast<ResourcePage*>(m_container->selectedPage());
+-    Q_ASSERT(result != nullptr);
+     return result;
+ }
+ 
+ void ResourceDownloadDialog::addResource(ModPlatform::IndexedPack::Ptr pack, ModPlatform::IndexedVersion& ver, QString downloadReason)
+ {
+     removeResource(pack->name);
+-    selectedPage()->addResourceToPage(pack, ver, getBaseModel(), std::move(downloadReason));
++    if (auto* page = selectedPage())
++        page->addResourceToPage(pack, ver, getBaseModel(), std::move(downloadReason));
+     setButtonStatus();
+ }
+ 
+ void ResourceDownloadDialog::removeResource(const QString& packName)
+ {
+     for (auto* page : m_container->getPages()) {
+-        static_cast<ResourcePage*>(page)->removeResourceFromPage(packName);
++        if (auto* resourcePage = dynamic_cast<ResourcePage*>(page))
++            resourcePage->removeResourceFromPage(packName);
+     }
+     setButtonStatus();
+ }
+@@ -253,39 +257,37 @@ void ResourceDownloadDialog::setButtonStatus()
+ {
+     auto selected = false;
+     for (auto* page : m_container->getPages()) {
+-        auto* res = static_cast<ResourcePage*>(page);
+-        selected = selected || res->hasSelectedPacks();
++        if (auto* res = dynamic_cast<ResourcePage*>(page))
++            selected = selected || res->hasSelectedPacks();
+     }
+-    m_buttons.button(QDialogButtonBox::Ok)->setEnabled(selected);
++    m_buttons.button(QDialogButtonBox::Ok)->setEnabled(selected && selectedPage());
+ }
+ 
+ QList<ResourceDownloadDialog::DownloadTaskPtr> ResourceDownloadDialog::getTasks()
+ {
+     QList<DownloadTaskPtr> selected;
+     for (auto* page : m_container->getPages()) {
+-        auto* res = static_cast<ResourcePage*>(page);
+-        selected.append(res->selectedPacks());
++        if (auto* res = dynamic_cast<ResourcePage*>(page))
++            selected.append(res->selectedPacks());
+     }
+     return selected;
+ }
+ 
+ void ResourceDownloadDialog::selectedPageChanged(BasePage* previous, BasePage* selected)
+ {
++    setButtonStatus();
+     // If previous is null (first selection), nothing to sync
+     if (!previous) {
+         return;
+     }
+ 
+     auto* prevPage = dynamic_cast<ResourcePage*>(previous);
+-    if (!prevPage) {
+-        qCritical() << "Page '" << previous->displayName() << "' in ResourceDownloadDialog is not a ResourcePage!";
++    if (!prevPage)
+         return;
+-    }
+ 
+     // Same effect as having a global search bar
+-    auto* result = dynamic_cast<ResourcePage*>(selected);
+-    Q_ASSERT(result != nullptr);
+-    result->setSearchTerm(prevPage->getSearchTerm());
++    if (auto* result = dynamic_cast<ResourcePage*>(selected))
++        result->setSearchTerm(prevPage->getSearchTerm());
+ }
+ 
+ ModDownloadDialog::ModDownloadDialog(QWidget* parent, ModFolderModel* mods, BaseInstance* instance, bool suppressInitialSearch)
+@@ -318,6 +320,9 @@ QList<BasePage*> ModDownloadDialog::getPages()
+         pages.append(page);
+     }
+ 
++    if (auto* mods = dynamic_cast<ModFolderModel*>(getBaseModel()))
++        pages.append(new GitHubModsPage(this, *static_cast<MinecraftInstance*>(m_instance), *mods));
++
+     return pages;
+ }
+ 
