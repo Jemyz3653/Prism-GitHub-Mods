@@ -79,8 +79,7 @@ def search(offset, limit):
 def select(when, popular_count, random_count):
     search_page = search(0, max(1, popular_count))
     popular = [hit["project_id"] for hit in search_page["hits"]][:popular_count]
-    offset_cap = min(9900, max(0, int(search_page["total_hits"]) - 100))
-    offsets = list(range(100, offset_cap + 1, 100))
+    offsets = list(range(100, int(search_page["total_hits"]), 100))
     rng = random.Random(when.toordinal())
     rng.shuffle(offsets)
     pool = []

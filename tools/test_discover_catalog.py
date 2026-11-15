@@ -11,13 +11,17 @@ import discover_catalog as catalog
 
 class CatalogTests(unittest.TestCase):
     def test_sample_is_disjoint_and_repeatable(self):
+        pages = []
+
         def search(offset, limit):
-            return {"total_hits": 4000, "hits": [{"project_id": str(i)} for i in range(offset, offset + limit)]}
+            pages.append(offset)
+            return {"total_hits": 29741, "hits": [{"project_id": str(i)} for i in range(offset, offset + limit)]}
         with patch.object(catalog, "search", search):
             a = catalog.select(date(2026, 11, 15), 100, 50)
             self.assertEqual(a, catalog.select(date(2026, 11, 15), 100, 50))
         self.assertEqual(tuple(map(len, a)), (100, 50))
         self.assertFalse(set(a[0]) & set(a[1]))
+        self.assertGreater(max(pages), 10000)
 
     def test_source_repository_host_and_path(self):
         self.assertEqual(catalog.source_repo("https://github.com/Some-Owner/Mod.git/tree/main"), "Some-Owner/Mod")
