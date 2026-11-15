@@ -1,0 +1,63 @@
+name: Test Windows installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - '.github/workflows/installer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: false
+      - name: Test package validation and build the EXE
+        working-directory: installer
+        shell: pwsh
+        run: |
+          go test -v ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -trimpath -ldflags="-s -w -H=windowsgui" -o ../out/Prism-GitHub-Mods-Setup-x64.exe .
+          exit $LASTEXITCODE
+      - name: Load installer window and verify controls
+        shell: powershell
+        run: |
+          $source = [IO.File]::ReadAllText((Join-Path $PWD 'installer/setup.ps1'))
+          $mark = $source.LastIndexOf('$timer.Start()')
+          if ($mark -lt 0) { throw "Could not locate installer startup" }
+          $test = @'
+          foreach ($name in 'Prism','Data','Music','Pause','Stop','Motion','Install','Open','Star') {
+              if (-not $e[$name]) { throw "Missing control $name" }
+          }
+          if (-not $e.Motion.IsChecked -or $e.Pause.IsEnabled -or $e.Open.IsEnabled) {
+              throw "Unexpected initial control state"
+          }
+          $size = New-Object Windows.Size(840,500)
+          $point = New-Object Windows.Point(0,0)
+          $window.Content.Measure($size)
+          $window.Content.Arrange((New-Object Windows.Rect($point,$size)))
+          $window.Content.UpdateLayout()
+          $bitmap = New-Object Windows.Media.Imaging.RenderTargetBitmap(840,500,96,96,[Windows.Media.PixelFormats]::Pbgra32)
+          $bitmap.Render($window.Content)
+          $encoder = New-Object Windows.Media.Imaging.PngBitmapEncoder
+          $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+          $stream = [IO.File]::Create((Join-Path $PWD 'out/Installer-preview.png'))
+          try { $encoder.Save($stream) } finally { $stream.Dispose() }
+          $window.Close()
+          '@
+          & ([ScriptBlock]::Create($source.Substring(0,$mark) + $test))
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Prism-GitHub-Installer
+          path: out/*
+          if-no-files-found: error
