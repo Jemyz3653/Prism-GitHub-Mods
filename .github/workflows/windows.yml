@@ -48,13 +48,26 @@ jobs:
           cmake --preset windows_mingw -DENABLE_LTO=OFF -DLauncher_UPDATER_GITHUB_REPO= -DBUILD_TESTING=OFF
           cmake --build --preset windows_mingw --config Release --parallel 4
           cmake --install build --config Release
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: false
       - name: Package and smoke test
         shell: pwsh
         run: |
-          $launcher = Resolve-Path upstream/install/prismlauncher.exe
-          & $launcher --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $launcher = (Resolve-Path upstream/install/prismlauncher.exe).Path
+          $null = Resolve-Path upstream/install/platforms/qwindows.dll
+          $proc = Start-Process -FilePath $launcher -WorkingDirectory (Split-Path $launcher) -ArgumentList '--version' -PassThru
+          if (-not $proc.WaitForExit(30000)) { $proc.Kill(); throw "Prism --version timed out." }
+          if ($proc.ExitCode -ne 0) { throw "Prism --version failed with code $($proc.ExitCode)." }
           New-Item -ItemType Directory -Force out
+          Push-Location installer
+          try {
+            go test ./...
+            if ($LASTEXITCODE -ne 0) { throw "Installer tests failed." }
+            go build -trimpath -ldflags="-s -w -H=windowsgui" -o ../out/Prism-GitHub-Mods-Setup-x64.exe .
+            if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }
+          } finally { Pop-Location }
           Compress-Archive -Path upstream/install/* -DestinationPath out/Prism-11.1.1-GitHub-Windows-x64.zip
           (Get-FileHash out/Prism-11.1.1-GitHub-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant() |
             Set-Content -Encoding ascii out/Prism-11.1.1-GitHub-Windows-x64.sha256
@@ -63,3 +76,4 @@ jobs:
           name: Prism-GitHub-Windows-x64
           path: out/*
           if-no-files-found: error
+
