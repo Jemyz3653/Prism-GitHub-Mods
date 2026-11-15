@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
-[System.Windows.Interop.RenderOptions]::ProcessRenderMode = 'SoftwareOnly'
+[System.Windows.Media.RenderOptions]::ProcessRenderMode = 'SoftwareOnly'
 
 [xml]$markup = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
