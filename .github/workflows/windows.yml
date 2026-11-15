@@ -46,20 +46,17 @@ jobs:
           git apply --check ../patches/github-mods.patch
           git apply ../patches/github-mods.patch
           cmake --preset windows_mingw -DENABLE_LTO=OFF -DLauncher_UPDATER_GITHUB_REPO= -DBUILD_TESTING=OFF
-          cmake --build --preset windows_mingw --config Release --parallel 4
+          cmake --build --preset windows_mingw --config Release --parallel 6
           cmake --install build --config Release
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25.5'
           cache: false
-      - name: Package and smoke test
+      - name: Package patched Prism and installer
         shell: pwsh
         run: |
           $launcher = (Resolve-Path upstream/install/prismlauncher.exe).Path
           $null = Resolve-Path upstream/install/platforms/qwindows.dll
-          $proc = Start-Process -FilePath $launcher -WorkingDirectory (Split-Path $launcher) -ArgumentList '--version' -PassThru
-          if (-not $proc.WaitForExit(30000)) { $proc.Kill(); throw "Prism --version timed out." }
-          if ($proc.ExitCode -ne 0) { throw "Prism --version failed with code $($proc.ExitCode)." }
           New-Item -ItemType Directory -Force out
           Push-Location installer
           try {
@@ -77,3 +74,22 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+
+      - name: Smoke test Prism with a temporary data directory
+        shell: pwsh
+        run: |
+          $launcher = (Resolve-Path upstream/install/prismlauncher.exe).Path
+          $data = Join-Path $env:RUNNER_TEMP 'prism-launch-smoke'
+          New-Item -ItemType Directory -Force $data | Out-Null
+          $check = Join-Path $data 'live.check'
+          $proc = Start-Process -FilePath $launcher -WorkingDirectory (Split-Path $launcher) -ArgumentList ('--alive --dir "' + $data + '"') -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(35)
+            while (-not (Test-Path -LiteralPath $check) -and -not $proc.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not (Test-Path -LiteralPath $check)) { throw 'Prism did not start with the temporary data directory.' }
+            Write-Host 'Patched Prism started and wrote live.check.'
+          } finally {
+            if (-not $proc.HasExited) { $proc.Kill() }
+          }
