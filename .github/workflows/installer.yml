@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       test_release:
-        description: Install and launch the published v0.1.0 package in a temporary profile
+        description: Install and launch the published v0.2.0 package in a temporary profile
         type: boolean
         default: false
 

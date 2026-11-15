@@ -1,9 +1,9 @@
 diff --git a/launcher/ui/dialogs/GitHubModsPage.h b/launcher/ui/dialogs/GitHubModsPage.h
 new file mode 100644
-index 0000000..6aff78a
+index 0000000..f65e3e0
 --- /dev/null
 +++ b/launcher/ui/dialogs/GitHubModsPage.h
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,312 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +#pragma once
 +
@@ -45,7 +45,7 @@ index 0000000..6aff78a
 +        top->addWidget(m_reload);
 +        layout->addLayout(top);
 +
-+        auto* source = new QLabel(tr("Detemkur Studios · GitHub Releases"), this);
++        auto* source = new QLabel(tr("GitHub Releases"), this);
 +        layout->addWidget(source);
 +        m_projects = new QListWidget(this);
 +        layout->addWidget(m_projects, 1);
@@ -92,7 +92,7 @@ index 0000000..6aff78a
 +    }
 +
 +private:
-+    static constexpr qint64 MaxCatalog = 1024 * 1024;
++    static constexpr qint64 MaxCatalog = 4 * 1024 * 1024;
 +    static constexpr qint64 MaxJar = 128 * 1024 * 1024;
 +    using Receive = std::function<void(QByteArray, QString)>;
 +
@@ -168,7 +168,9 @@ index 0000000..6aff78a
 +        m_projects->clear();
 +        for (const auto& value : m_catalog) {
 +            auto p = value.toObject();
-+            if (!QRegularExpression(QStringLiteral("^Jemyz3653/[A-Za-z0-9_.-]+$")).match(p.value("repo").toString()).hasMatch())
++            const auto repo = p.value("repo").toString();
++            if (!QRegularExpression(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$")).match(repo).hasMatch()
++                || repo.endsWith("/.") || repo.endsWith("/.."))
 +                continue;
 +            if (!p.value("name").toString().contains(query, Qt::CaseInsensitive)
 +                && !p.value("description").toString().contains(query, Qt::CaseInsensitive))
@@ -219,6 +221,8 @@ index 0000000..6aff78a
 +        const auto dependencies = currentVersion().value("requires").toObject();
 +        if (!dependencies.isEmpty())
 +            description += tr("\nRequired mods: %1. Install missing dependencies from Modrinth or CurseForge.").arg(dependencies.keys().join(", "));
++        if (!project.isEmpty())
++            description += QStringLiteral("\n") + project.value("repo").toString();
 +        m_info->setText(description);
 +        const bool selected = m_versions->currentIndex() >= 0;
 +        m_open->setEnabled(selected);
@@ -235,7 +239,8 @@ index 0000000..6aff78a
 +        const auto digest = version.value("sha256").toString().toLatin1().toLower();
 +        const auto maxSize = version.value("bytes").toInteger();
 +        const QUrl url(version.value("url").toString());
-+        const auto repoPath = QStringLiteral("/") + project.value("repo").toString() + QStringLiteral("/releases/download/");
++        const auto expectedPath = QStringLiteral("/%1/releases/download/%2/%3")
++                                      .arg(project.value("repo").toString(), version.value("tag").toString(), name);
 +        const auto dir = m_mods.dir();
 +        const auto destination = dir.filePath(name);
 +        const auto modId = project.value("id").toString();
@@ -244,7 +249,7 @@ index 0000000..6aff78a
 +            || !QRegularExpression(QStringLiteral("^[a-f0-9]{64}$")).match(QString::fromLatin1(digest)).hasMatch()
 +            || maxSize <= 0 || maxSize > MaxJar
 +            || url.scheme() != QStringLiteral("https") || url.authority() != QStringLiteral("github.com")
-+            || !url.path().startsWith(repoPath) || !url.path().endsWith(QStringLiteral("/") + name)) {
++            || url.hasQuery() || url.hasFragment() || url.path().compare(expectedPath, Qt::CaseInsensitive) != 0) {
 +            m_status->setText(tr("Invalid release metadata."));
 +            return;
 +        }

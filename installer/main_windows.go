@@ -21,7 +21,7 @@ import (
 //go:embed setup.ps1
 var setupScript []byte
 
-const releaseBase = "https://github.com/Jemyz3653/Prism-GitHub-Mods/releases/download/v0.1.0/"
+const releaseBase = "https://github.com/Jemyz3653/Prism-GitHub-Mods/releases/download/v0.2.0/"
 
 type InstallRequest struct {
 	Original string
@@ -162,7 +162,7 @@ func install(work string) (Result, error) {
 	sumFile := filepath.Join(staged, "sha256")
 	result(work, Result{Status: "Скачиваю сборку Prism с GitHub…"})
 	if err := download(releaseBase+"Prism-11.1.1-GitHub-Windows-x64.sha256", sumFile, 1024); err != nil {
-		return installed, fmt.Errorf("архив релиза v0.1.0 недоступен: %w", err)
+		return installed, fmt.Errorf("архив релиза v0.2.0 недоступен: %w", err)
 	}
 	sum, err := os.ReadFile(sumFile)
 	if err != nil {
