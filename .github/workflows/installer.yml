@@ -87,9 +87,18 @@ jobs:
           if ((Get-FileHash $original).Hash -ne $originalHash -or (Get-FileHash $config).Hash -ne $configHash) {
             throw 'Installation modified the existing Prism files.'
           }
-          $process = Start-Process -FilePath $result.Exe -ArgumentList '--version' -PassThru
-          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Installed Prism failed to exit.' }
-          if ($process.ExitCode -ne 0) { throw "Installed Prism exited $($process.ExitCode)." }
+          $live = Join-Path $data 'live.check'
+          $process = Start-Process -FilePath $result.Exe -ArgumentList ('--alive --dir "' + $data + '"') -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(35)
+            while (-not (Test-Path -LiteralPath $live) -and -not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not (Test-Path -LiteralPath $live)) { throw 'Installed Prism did not start.' }
+            Write-Host 'Release unpacked without modifying the original executable or configuration. Installed Prism started.'
+          } finally {
+            if (-not $process.HasExited) { $process.Kill() }
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: Prism-GitHub-Installer
