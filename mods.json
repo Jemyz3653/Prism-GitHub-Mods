@@ -234,6 +234,32 @@
       ]
     },
     {
+      "id": "servermodguard",
+      "name": "Server Mod Guard",
+      "description": "Dedicated servers only. Versioned Fabric channel checks and verified server mod updates.",
+      "repo": "Jemyz3653/ServerModGuard",
+      "environment": "server",
+      "releases": [
+        {
+          "version": "1.0.0",
+          "minecraft": [
+            "26.3"
+          ],
+          "loader": "fabric",
+          "tag": "v1.0.0",
+          "prerelease": false,
+          "file": "servermodguard-1.0.0+26.3.jar",
+          "url": "https://github.com/Jemyz3653/ServerModGuard/releases/download/v1.0.0/servermodguard-1.0.0%2B26.3.jar",
+          "sha256": "6e4f7e5959d61f80e39a2affb299523e3d37fe2c86fa6996a0d5a61ab4fa954a",
+          "bytes": 39829,
+          "requires": {
+            "fabric-networking-api-v1": "*",
+            "fabric-lifecycle-events-v1": "*"
+          }
+        }
+      ]
+    },
+    {
       "id": "entity_texture_features",
       "name": "[ETF] Entity Texture Features",
       "description": "Emissive, Random & Custom texture support for entities in resourcepacks just like Optifine but for Fabric",
