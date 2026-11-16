@@ -178,6 +178,62 @@
       ]
     },
     {
+      "id": "pingguard",
+      "name": "PingGuard",
+      "description": "Shows a compact animated warning when your connection is poor or the server stops responding.",
+      "repo": "Jemyz3653/PingGuard",
+      "releases": [
+        {
+          "version": "1.0.2",
+          "minecraft": [
+            "26.3"
+          ],
+          "loader": "fabric",
+          "tag": "v1.0.2",
+          "prerelease": false,
+          "file": "pingguard-1.0.2.jar",
+          "url": "https://github.com/Jemyz3653/PingGuard/releases/download/v1.0.2/pingguard-1.0.2.jar",
+          "sha256": "fb8fadee07292e788763ea81e07142b08afa0c78186d1fcf904e506724281921",
+          "bytes": 1201507,
+          "requires": {
+            "fabric-api": "*"
+          }
+        },
+        {
+          "version": "1.0.1",
+          "minecraft": [
+            "26.3"
+          ],
+          "loader": "fabric",
+          "tag": "v1.0.1",
+          "prerelease": false,
+          "file": "pingguard-1.0.1.jar",
+          "url": "https://github.com/Jemyz3653/PingGuard/releases/download/v1.0.1/pingguard-1.0.1.jar",
+          "sha256": "7fa03e8ab1d54351a8c761cb831234dcfb862365e42e8e345fa17810056cb4d3",
+          "bytes": 1200998,
+          "requires": {
+            "fabric-api": "*"
+          }
+        },
+        {
+          "version": "1.0.0",
+          "minecraft": [
+            "26.3"
+          ],
+          "loader": "fabric",
+          "tag": "v1.0.0",
+          "prerelease": false,
+          "file": "pingguard-1.0.0.jar",
+          "url": "https://github.com/Jemyz3653/PingGuard/releases/download/v1.0.0/pingguard-1.0.0.jar",
+          "sha256": "d0305e6f8af86c9f9406de6e02cc4c4b5eeba437651e69754cbb04853509a48c",
+          "bytes": 1197600,
+          "requires": {
+            "fabric-api": "*"
+          }
+        }
+      ]
+    },
+    {
       "id": "entity_texture_features",
       "name": "[ETF] Entity Texture Features",
       "description": "Emissive, Random & Custom texture support for entities in resourcepacks just like Optifine but for Fabric",
